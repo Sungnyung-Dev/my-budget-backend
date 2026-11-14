@@ -1,6 +1,6 @@
 # my-budget-backend
 
-개인용 iOS 가계부 앱을 위한 독립적인 Node.js + Express + TypeScript 백엔드입니다. 현재 범위는 `/health`, 환경변수 검증, Prisma ORM 7 + MySQL 스키마, 초기 마이그레이션 및 기본 카테고리 Seed입니다.
+개인용 iOS 가계부 앱을 위한 독립적인 Node.js + Express + TypeScript 백엔드입니다. `/health`, 환경변수 검증, Prisma ORM 7 + MySQL 스키마·Seed, 카테고리 CRUD API 및 공통 입력 검증·오류 처리를 제공합니다. 현재는 로컬 개발용으로만 실행합니다.
 
 ## 요구사항
 
@@ -9,6 +9,8 @@
 - 패키지 버전은 `package-lock.json`에 고정되어 있습니다.
 
 Prisma CLI·Client·MySQL 어댑터는 **7.10.1**로 통일했습니다. ESM, `prisma-client` 생성기, 명시적 출력 경로, `prisma.config.ts`의 datasource URL 및 `@prisma/adapter-mariadb`를 사용합니다. MariaDB 드라이버는 어댑터의 의존성으로 설치되며 MySQL에 연결합니다.
+
+요청 검증은 **Zod 4.6.7**을 사용합니다. HTTP 테스트는 기존 Node.js 테스트 러너와 `fetch`를 사용하며 추가 테스트 패키지는 설치하지 않습니다.
 
 공식 문서: [Prisma 7 설정](https://www.prisma.io/docs/orm/v7/reference/prisma-config-reference), [MySQL 연결](https://www.prisma.io/docs/orm/v7/core-concepts/supported-databases/mysql), [사용자 정의 마이그레이션](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/unsupported-database-features).
 
@@ -25,17 +27,22 @@ src/
   db/prisma.ts                 # MySQL 어댑터 및 단일 Prisma Client
   domain/ledger.ts             # 금액·날짜 변환, 정규화, 프론트엔드 DTO
   generated/prisma/            # 자동 생성, Git 제외
-  app.ts                       # GET /health
+  middleware/errorHandler.ts  # 공통 오류 응답, 요청 ID, 안전한 오류 로그
+  modules/categories/
+    categories.routes.ts       # /api/v1/categories
+    categories.service.ts      # Prisma 조회·변경 및 DB 오류 변환
+    categories.validation.ts   # 파라미터·쿼리·본문 Zod 스키마
+  app.ts                       # Express 앱 구성, GET /health
   server.ts                    # DB 연결 후 서버 시작, 종료 처리
 tests/
-  *.test.ts                    # 환경변수, DTO·검증, HTTP 테스트
+  *.test.ts                    # 환경변수, DTO, 요청 검증·오류·HTTP 테스트
+  helpers/http.ts              # loopback 임시 HTTP 서버
+  db/categories.test.ts        # 실제 DB API·경합 검증, 기존 데이터 해시 비교
   db/schema.test.ts            # 로컬 DB 통합 검증, 검증 데이터 롤백
 prisma.config.ts
 tsconfig.json
 tsconfig.build.json
 ```
-
-CRUD 모듈과 빈 디렉터리는 아직 만들지 않았습니다.
 
 ## 설치 및 환경변수
 
@@ -84,7 +91,7 @@ npm run db:seed
 npm run db:status
 ```
 
-새 스키마 변경을 만들 때는 `npm run db:migrate -- --name 변경이름`을 사용합니다. `migrate dev`는 변경 감지를 위한 shadow DB가 필요하므로 자동 생성·삭제 권한이 있는 로컬 개발 계정을 사용하거나, 별도 shadow DB를 만들고 `prisma.config.ts`의 `datasource.shadowDatabaseUrl`에 환경변수로 URL을 전달해야 합니다. shadow DB와 개발 DB는 반드시 서로 달라야 합니다. 이번 검증은 기존 로컬 관리자 계정으로 `db:migrate`를 실행했습니다.
+새 스키마 변경을 만들 때는 `npm run db:migrate -- --name 변경이름`을 사용합니다. `migrate dev`는 변경 감지를 위한 shadow DB가 필요하므로 자동 생성·삭제 권한이 있는 로컬 개발 계정을 사용하거나, 별도 shadow DB를 만들고 `prisma.config.ts`의 `datasource.shadowDatabaseUrl`에 환경변수로 URL을 전달해야 합니다. shadow DB와 개발 DB는 반드시 서로 달라야 합니다. 초기 구축 당시 기존 로컬 관리자 계정으로 `db:migrate`를 실행했으며, 이번 카테고리 API 작업에서는 마이그레이션을 실행하거나 추가하지 않았습니다.
 
 트리거·CHECK·collation을 수정할 때는 `--create-only`로 SQL을 생성한 뒤 필요한 SQL을 검토하여 적용하세요. 적용된 마이그레이션을 나중에 수정하지 마세요.
 
@@ -112,6 +119,72 @@ curl http://127.0.0.1:3000/health
 
 `/health`는 HTTP 200을 반환하는 프로세스 상태 확인용이며, 요청마다 DB를 조회하지 않습니다. 실행 이후의 DB 장애까지 확인하는 readiness 검사는 후속 작업입니다.
 
+## 카테고리 API
+
+기본 주소는 `http://127.0.0.1:3000`입니다. `.env`의 `HOST=127.0.0.1`을 유지하며, 인증·접근 제어를 추가하기 전에는 외부에 공개하지 않습니다. 환경변수 추가나 DB 스키마 변경 없이 기존 설정을 사용합니다.
+
+| 메서드·경로 | 동작 | 성공 응답 |
+| --- | --- | --- |
+| `GET /api/v1/categories` | 전체 목록, `?type=expense` 또는 `?type=income` 필터 | 200, Category DTO 배열 |
+| `POST /api/v1/categories` | `name`, `type`, `symbol`으로 생성, ID는 서버 UUID | 201, Category DTO |
+| `PATCH /api/v1/categories/:id` | `name`만 변경, ID·유형·symbol 유지 | 200, Category DTO |
+| `DELETE /api/v1/categories/:id` | 사용하지 않는 카테고리 삭제 | 204, 본문 없음 |
+
+목록은 유형(`expense` → `income`), DB collation 기준 이름 오름차순, ID 오름차순으로 정렬합니다. DTO에는 `id`, `name`, `type`, `symbol`만 포함합니다. 단건 GET은 아직 제공하지 않습니다.
+
+POST·PATCH는 `Content-Type: application/json`을 사용합니다. JSON 본문은 최대 16 KiB이며 압축 본문은 지원하지 않습니다. 이름은 기존 `normalizeCategoryName`을 통해 공백 제거 후 1~20자(JS UTF-16 길이)로 검증합니다. type·symbol은 Prisma에서 생성한 enum으로 검증하여 DB와 기준을 공유합니다.
+
+알 수 없는 필드·쿼리, 중복 type 쿼리, 클라이언트가 지정한 생성 ID, PATCH의 type·symbol 변경, DELETE의 본문은 400입니다. ID는 비어 있지 않은 191자 이하 문자열로 검증하며 UUID로 제한하지 않으므로 기존 iOS 문자열 ID도 사용할 수 있습니다. 생성·변경·삭제에는 쿼리 옵션이 없습니다.
+
+```sh
+curl 'http://127.0.0.1:3000/api/v1/categories?type=expense'
+# [{"id":"food","name":"식비","type":"expense","symbol":"food"}, ...]
+
+curl -i -X POST http://127.0.0.1:3000/api/v1/categories \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"  운동  ","type":"expense","symbol":"other"}'
+# HTTP 201
+# {"id":"<서버가 생성한 UUID>","name":"운동","type":"expense","symbol":"other"}
+
+# 아래 ID는 생성 응답에서 받은 실제 문자열로 바꾸세요.
+curl -X PATCH http://127.0.0.1:3000/api/v1/categories/생성된-ID \
+  -H 'Content-Type: application/json' -d '{"name":"체육"}'
+# {"id":"<동일한 UUID>","name":"체육","type":"expense","symbol":"other"}
+
+curl -i -X DELETE http://127.0.0.1:3000/api/v1/categories/생성된-ID
+# HTTP 204, 본문 없음
+```
+
+같은 유형의 이름 중복은 대소문자를 구분하지 않고 409를 반환합니다. 다른 유형에는 동일 이름을 사용할 수 있습니다. 현재 이름으로 다시 PATCH하는 요청은 성공합니다. 사용 중인 카테고리는 이름을 바꿀 수 있고 기존 거래 연결도 유지되지만, 삭제는 409로 거부합니다.
+
+사전 조회에 의존하지 않고 DB의 UNIQUE·외래키 RESTRICT 제약을 최종 판단으로 사용합니다. 동시 생성·이름 변경 충돌도 같은 409로 변환합니다. 삭제는 `deleteMany({ where: { id } })`의 삭제 건수를 확인하여 동시 삭제 중 한 요청은 204, 나머지는 404를 반환합니다. 이 Prisma 버전과 MySQL 조합의 `delete()`에서는 경합 시 두 요청 모두 이전 행을 반환하는 경우가 실제 테스트에서 확인되어 삭제 건수 확인 방식으로 처리했습니다.
+
+## 공통 오류 응답
+
+오류는 개발 모드에서도 다음 JSON 형식을 사용합니다.
+
+```json
+{
+  "error": {
+    "code": "CATEGORY_NAME_CONFLICT",
+    "message": "이미 존재하는 카테고리 이름입니다."
+  }
+}
+```
+
+| HTTP | code | 조건 |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | 입력 검증, JSON 형식·헤더·크기·인코딩 오류 |
+| 404 | `CATEGORY_NOT_FOUND` | 수정·삭제 대상 없음, Prisma P2025 |
+| 404 | `API_NOT_FOUND` | 존재하지 않는 경로 또는 지원하지 않는 메서드 |
+| 409 | `CATEGORY_NAME_CONFLICT` | 유형별 이름 중복, Prisma P2002 |
+| 409 | `CATEGORY_IN_USE` | 거래가 참조하는 카테고리 삭제, Prisma P2003 |
+| 500 | `INTERNAL_SERVER_ERROR` | 예상하지 못한 오류, 메시지는 `서버 오류가 발생했습니다.` |
+
+Express 5가 async 라우트의 오류를 공통 미들웨어에 전달하므로 별도 async 래퍼는 사용하지 않습니다. 카테고리 관련 Prisma 오류 변환은 카테고리 서비스에 두어 향후 다른 모듈에서 의미가 다른 외래키 오류를 독립적으로 처리할 수 있게 했습니다. 참고: [Express 오류 처리](https://expressjs.com/en/5x/guide/error-handling/), [Prisma 7 오류 코드](https://www.prisma.io/docs/orm/v7/reference/error-reference), [Zod 스키마·변환](https://zod.dev/api).
+
+모든 응답의 `X-Request-Id`는 서버가 생성하며, 클라이언트가 준 값을 신뢰하지 않습니다. 500 오류 로그에는 요청 ID, HTTP 메서드, ID 값이 없는 경로 템플릿, 오류 종류, Prisma 코드, 스택에서 추출한 소스 상대 위치만 기록합니다. 원본 오류 메시지·전체 스택·Prisma meta·SQL·접속 URL·요청 본문·인증 헤더·쿠키는 기록하거나 응답에 포함하지 않습니다.
+
 ## 데이터 모델 및 프론트엔드 계약
 
 | 모델 | 필드 및 제약 |
@@ -122,17 +195,17 @@ curl http://127.0.0.1:3000/health
 - ID는 `VARCHAR(191)`, 새 ID의 기본값은 UUID입니다. iOS의 `food`, `salary`, 임의 문자열 ID도 그대로 보존할 수 있고 UUID 형식으로 제한하지 않습니다. ID는 대소문자를 구분합니다. 191자를 넘는 기존 ID는 향후 이전 시 확인해야 합니다.
 - `type`은 `expense`/`income` enum입니다. `symbol`은 `food`, `coffee`, `transport`, `shopping`, `living`, `home`, `income`, `other` enum입니다.
 - `(categoryId, type)` → `Category(id, type)` 복합 외래키로 참조와 유형 일치를 함께 보장합니다. 삭제·참조 키 변경은 `RESTRICT`입니다.
-- `(type, name)` UNIQUE로 유형별 중복 이름을 막습니다. 이름에는 대소문자를 구분하지 않고 악센트는 구분하는 `utf8mb4_0900_as_ci`를 사용합니다. MySQL collation과 JS `toLocaleLowerCase()`의 특수 유니코드 비교가 완전히 같지는 않으므로 향후 API에서는 이름 정규화 및 DB 중복 오류 처리가 필요합니다.
+- `(type, name)` UNIQUE로 유형별 중복 이름을 막습니다. 이름에는 대소문자를 구분하지 않고 악센트는 구분하는 `utf8mb4_0900_as_ci`를 사용합니다. MySQL collation과 JS `toLocaleLowerCase()`의 특수 유니코드 비교가 완전히 같지는 않으므로 API는 이름 정규화 후 DB 제약조건을 기준으로 중복 오류를 반환합니다.
 - 거래 `date`와 `(categoryId, type)`에 인덱스를 둡니다.
 - 카테고리 유형은 사용 여부와 관계없이 `BEFORE UPDATE` 트리거로 변경을 거부합니다.
 - 금액 `1~999,999,999,999`와 날짜 `1900-01-01~9999-12-31`은 DB CHECK로도 제한합니다. 빈 ID와 빈 이름도 거부합니다.
 - `createdAt`/`updatedAt`은 `DATETIME(3)`이며 `updatedAt`은 Prisma가 갱신합니다. 원시 SQL로 수정할 경우 호출자가 갱신해야 합니다.
 
-`src/domain/ledger.ts`는 향후 API에서 사용할 작은 변환 함수들입니다. 입력 금액에 `Number.isSafeInteger`와 허용 범위를 검사한 후 `bigint`로 바꾸고, 출력은 범위 확인 후 `number`로 바꿉니다. `bigint`를 그대로 `res.json`에 넘기지 마세요. 날짜는 UTC 자정의 `Date`로 저장하고 `YYYY-MM-DD`로 반환하여 한국 시간대에서도 날짜가 밀리지 않게 합니다.
+`src/domain/ledger.ts`의 카테고리 정규화·DTO 함수는 현재 API에서 재사용합니다. 거래용 함수는 입력 금액에 `Number.isSafeInteger`와 허용 범위를 검사한 후 `bigint`로 바꾸고, 출력은 범위 확인 후 `number`로 바꿉니다. `bigint`를 그대로 `res.json`에 넘기지 마세요. 날짜는 UTC 자정의 `Date`로 저장하고 `YYYY-MM-DD`로 반환하여 한국 시간대에서도 날짜가 밀리지 않게 합니다.
 
 DTO는 iOS와 같은 `Category`, `Transaction`, `LedgerData(version: 1)` 필드만 반환합니다. DB 타임스탬프는 포함하지 않습니다. `toLedgerDto`는 전체 거래 금액의 합에 대해서도 안전한 정수 범위를 확인합니다. 향후 쓰기 API에서 전체 합 제한을 동시 요청에도 어떻게 보장할지 결정해야 합니다.
 
-`normalizeCategoryName`, `normalizeMemo`는 iOS처럼 trim 후 JS UTF-16 길이를 검사합니다. MySQL `VARCHAR`는 유니코드 문자 개수를 세므로, 향후 쓰기 API는 이 함수로 검증해야 이모지 등의 길이 제한도 iOS와 일치합니다.
+`normalizeCategoryName`, `normalizeMemo`는 iOS처럼 trim 후 JS UTF-16 길이를 검사합니다. MySQL `VARCHAR`는 유니코드 문자 개수를 세므로, 카테고리 API는 기존 함수로 검증하고 향후 거래 API도 같은 방식을 사용해야 이모지 등의 길이 제한이 iOS와 일치합니다.
 
 읽기 전용으로 확인한 프론트엔드 파일은 `../my-budget-ios/src/domain/{types,ledger,dates}.ts`, `src/data/{mockData,ledgerRepository}.ts`입니다. 해당 레포지토리는 수정하지 않았고 백엔드에서 참조하거나 import하지 않습니다.
 
@@ -153,14 +226,18 @@ npm run build
 TZ=Asia/Seoul npm run test:db
 ```
 
-기본 테스트는 실제 DB 없이 동작합니다. 통합 테스트는 `development`/`test`, loopback 호스트, `_dev`/`_test` 접미사가 있는 DB만 허용하고, 검증용 데이터는 마지막에 모두 롤백합니다.
+기본 테스트는 실제 DB 없이 동작합니다. 통합 테스트는 `development`/`test`, loopback 호스트, `_dev`/`_test` 접미사가 있는 DB만 허용합니다. 임시 HTTP 서버도 loopback에만 바인딩합니다. DB 테스트 파일은 순차 실행합니다.
 
-초기 구축 시 Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 마이그레이션 적용, Seed 2회, 기본 테스트 9개, DB 통합 테스트 1개, 타입 검사와 빌드를 검증했습니다. TypeScript 실행과 빌드된 서버 각각에서 DB 연결, `/health` HTTP 200, `SIGTERM` 정상 종료를 확인했고, 잘못된 환경변수의 조기 종료와 인증정보 비노출도 확인했습니다. MySQL 8.4에서의 실행 검증은 아직 수행하지 않았습니다. 검증 후 카테고리 10개, 거래 0개만 유지합니다.
+일반 API 검증은 트랜잭션으로 롤백합니다. 실제 동시 요청 검증은 서로 다른 연결에서 생성한 테스트 전용 행을 사용하고 `finally`에서 해당 행만 정리합니다. 기존 Seed나 거래는 수정·삭제하지 않으며, 검증 전후 모든 기존 행(타임스탬프 포함)의 SHA-256 해시가 같은지 확인합니다. 테스트 중 프로세스를 강제 종료하면 경합 테스트 전용 행이 남을 수 있으므로 전용 테스트 DB 사용을 권장합니다.
+
+Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 기본 테스트 **14개**, DB 테스트 **4개(하위 테스트 2개 포함)**, 타입 검사와 빌드가 통과했습니다. 동시 생성·이름 변경·삭제, 외래키 RESTRICT, 금액·날짜·타입 불변성, 안전한 500 응답·로그를 검증했습니다. 검증 전후 기존 카테고리 10개·거래 0개의 해시가 일치했습니다. 스키마와 마이그레이션은 변경하지 않았습니다. MySQL 8.4 실행 검증은 아직 수행하지 않았습니다.
 
 ## 후속 작업 및 배포 설정
 
-거래·카테고리 CRUD, 입력 스키마 검증과 오류 응답, 프론트엔드 API 연결, AsyncStorage 이전, 인증·접근 제어, 운영 배포는 이번 범위에서 제외했습니다.
+거래 CRUD, 전체 Ledger·통계 API, 프론트엔드 API 연결, AsyncStorage 이전, 인증·접근 제어, 운영 배포는 아직 구현하지 않았습니다.
+
+다음 거래 CRUD에서는 기존 금액·날짜·메모 검증과 DTO를 재사용하고, 복합 외래키의 유형 일치 오류를 거래 입력 오류로 변환해야 합니다. 전체 거래 금액의 안전 정수 한도에 대한 동시 쓰기 정책과 날짜 조회 범위·정렬·페이지 처리도 결정해야 합니다.
 
 향후 서버에서는 `NODE_ENV=production`, 적절한 `HOST`·`PORT`, 별도 운영 `DATABASE_URL`을 환경변수로 주입합니다. 호스트 주소나 자격증명은 소스에 넣지 않습니다. `npm run build` 후 `npm start`, 검토된 마이그레이션은 `npm run db:deploy`를 사용합니다. 초기 개발 Seed는 운영 실행을 거부합니다. 운영 서버·DB에는 이번 작업에서 접속하거나 설정을 변경하지 않았습니다.
 
-로컬 Git 저장소는 `main` 브랜치로 초기화했습니다. GitHub 원격 생성, commit, push는 수행하지 않았습니다. Git 상태를 검토한 뒤 사용자가 별도로 진행할 수 있습니다.
+기존 Git 설정을 유지합니다. 이번 카테고리 API 작업에서 원격 저장소 생성, commit, push는 수행하지 않았습니다.
