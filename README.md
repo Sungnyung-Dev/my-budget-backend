@@ -1,6 +1,6 @@
 # my-budget-backend
 
-개인용 iOS 가계부 앱을 위한 독립적인 Node.js + Express + TypeScript 백엔드입니다. `/health`, 환경변수 검증, Prisma ORM 7 + MySQL 스키마·Seed, 카테고리 CRUD API 및 공통 입력 검증·오류 처리를 제공합니다. 현재는 로컬 개발용으로만 실행합니다.
+개인용 iOS 가계부 앱을 위한 독립적인 Node.js + Express + TypeScript 백엔드입니다. `/health`, 환경변수 검증, Prisma ORM 7 + MySQL 스키마·Seed, 카테고리·거래 CRUD API 및 공통 입력 검증·오류 처리를 제공합니다. 현재는 로컬 개발용으로만 실행합니다.
 
 ## 요구사항
 
@@ -28,16 +28,23 @@ src/
   domain/ledger.ts             # 금액·날짜 변환, 정규화, 프론트엔드 DTO
   generated/prisma/            # 자동 생성, Git 제외
   middleware/errorHandler.ts  # 공통 오류 응답, 요청 ID, 안전한 오류 로그
+  validation/request.ts       # 공통 ID·type·본문 검증, 도메인 검증과 Zod 연결
   modules/categories/
     categories.routes.ts       # /api/v1/categories
     categories.service.ts      # Prisma 조회·변경 및 DB 오류 변환
     categories.validation.ts   # 파라미터·쿼리·본문 Zod 스키마
+  modules/transactions/
+    transactions.routes.ts     # /api/v1/transactions
+    transactions.service.ts    # 조회·변경, 합계·참조 무결성 트랜잭션
+    transactions.validation.ts # 거래 입력·부분 수정·기간 검증
   app.ts                       # Express 앱 구성, GET /health
   server.ts                    # DB 연결 후 서버 시작, 종료 처리
 tests/
   *.test.ts                    # 환경변수, DTO, 요청 검증·오류·HTTP 테스트
   helpers/http.ts              # loopback 임시 HTTP 서버
+  helpers/database.ts          # 로컬 DB 보호, 기존 데이터 해시 계산
   db/categories.test.ts        # 실제 DB API·경합 검증, 기존 데이터 해시 비교
+  db/transactions.test.ts      # 거래 API·동시 요청·실제 금액 한도 검증
   db/schema.test.ts            # 로컬 DB 통합 검증, 검증 데이터 롤백
 prisma.config.ts
 tsconfig.json
@@ -91,7 +98,7 @@ npm run db:seed
 npm run db:status
 ```
 
-새 스키마 변경을 만들 때는 `npm run db:migrate -- --name 변경이름`을 사용합니다. `migrate dev`는 변경 감지를 위한 shadow DB가 필요하므로 자동 생성·삭제 권한이 있는 로컬 개발 계정을 사용하거나, 별도 shadow DB를 만들고 `prisma.config.ts`의 `datasource.shadowDatabaseUrl`에 환경변수로 URL을 전달해야 합니다. shadow DB와 개발 DB는 반드시 서로 달라야 합니다. 초기 구축 당시 기존 로컬 관리자 계정으로 `db:migrate`를 실행했으며, 이번 카테고리 API 작업에서는 마이그레이션을 실행하거나 추가하지 않았습니다.
+새 스키마 변경을 만들 때는 `npm run db:migrate -- --name 변경이름`을 사용합니다. `migrate dev`는 변경 감지를 위한 shadow DB가 필요하므로 자동 생성·삭제 권한이 있는 로컬 개발 계정을 사용하거나, 별도 shadow DB를 만들고 `prisma.config.ts`의 `datasource.shadowDatabaseUrl`에 환경변수로 URL을 전달해야 합니다. shadow DB와 개발 DB는 반드시 서로 달라야 합니다. 초기 구축 당시 기존 로컬 관리자 계정으로 `db:migrate`를 실행했으며, 카테고리·거래 API 작업에서는 스키마 변경이나 마이그레이션 추가 없이 기존 제약조건을 사용합니다.
 
 트리거·CHECK·collation을 수정할 때는 `--create-only`로 SQL을 생성한 뒤 필요한 SQL을 검토하여 적용하세요. 적용된 마이그레이션을 나중에 수정하지 마세요.
 
@@ -159,6 +166,56 @@ curl -i -X DELETE http://127.0.0.1:3000/api/v1/categories/생성된-ID
 
 사전 조회에 의존하지 않고 DB의 UNIQUE·외래키 RESTRICT 제약을 최종 판단으로 사용합니다. 동시 생성·이름 변경 충돌도 같은 409로 변환합니다. 삭제는 `deleteMany({ where: { id } })`의 삭제 건수를 확인하여 동시 삭제 중 한 요청은 204, 나머지는 404를 반환합니다. 이 Prisma 버전과 MySQL 조합의 `delete()`에서는 경합 시 두 요청 모두 이전 행을 반환하는 경우가 실제 테스트에서 확인되어 삭제 건수 확인 방식으로 처리했습니다.
 
+## 거래 API
+
+| 메서드·경로 | 동작 | 성공 응답 |
+| --- | --- | --- |
+| `GET /api/v1/transactions` | 전체 또는 기간별 목록 | 200, Transaction DTO 배열 |
+| `GET /api/v1/transactions/:id` | 문자열 ID로 단건 조회 | 200, Transaction DTO |
+| `POST /api/v1/transactions` | 거래 생성, ID는 서버 UUID | 201, Transaction DTO |
+| `PATCH /api/v1/transactions/:id` | 제공한 필드만 부분 수정 | 200, 최종 Transaction DTO |
+| `DELETE /api/v1/transactions/:id` | 삭제 건수로 성공·대상 없음 구분 | 204, 본문 없음 |
+
+목록은 **날짜 내림차순, ID 오름차순**으로 정렬합니다. `from`, `to`는 각각 생략할 수 있고, 시작일은 포함·종료일은 제외합니다. `from=to`이면 빈 배열을 반환하고 `from>to`이면 400입니다. 날짜는 1900~9999년의 실제 존재하는 `YYYY-MM-DD`여야 하며 날짜·시간 문자열은 받지 않습니다. 목록 외 경로에는 쿼리 옵션이 없고, 목록에서도 `from`, `to` 외의 쿼리와 중복 쿼리는 거부합니다.
+
+POST의 `type`, `amount`, `categoryId`, `date`, `memo`는 모두 필수입니다. `memo`가 없으면 빈 문자열 `""`을 보내세요. 금액은 숫자형 안전 정수 1~999,999,999,999원이며 숫자 문자열·소수는 받지 않습니다. 메모는 기존 `normalizeMemo`로 trim 후 최대 100자(JS UTF-16 길이)를 검사합니다. 카테고리는 존재해야 하며 거래와 유형이 같아야 합니다.
+
+PATCH는 위 다섯 필드 중 하나 이상을 보내야 합니다. 생략한 필드는 유지하며 `null`, 빈 객체, ID·타임스탬프 등의 추가 필드는 400입니다. 현재 거래와 수정값을 합쳐 최종 `(categoryId, type)`을 검사하므로 유형만 변경하거나 카테고리만 변경하는 요청도 정합성을 지켜야 합니다. 다른 유형으로 변경하려면 해당 유형의 카테고리를 함께 보내야 합니다.
+
+```sh
+curl 'http://127.0.0.1:3000/api/v1/transactions?from=2026-11-01&to=2026-12-01'
+# 11월 1일 포함 ~ 12월 1일 제외
+
+curl -i -X POST http://127.0.0.1:3000/api/v1/transactions \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"expense","amount":9000,"categoryId":"food","date":"2026-11-14","memo":" 점심 식사 "}'
+# HTTP 201
+# {"id":"<생성된 ID>","date":"2026-11-14","type":"expense","amount":9000,"categoryId":"food","memo":"점심 식사"}
+
+# 생성 응답의 실제 ID로 바꾸세요.
+curl http://127.0.0.1:3000/api/v1/transactions/생성된-ID
+curl -X PATCH http://127.0.0.1:3000/api/v1/transactions/생성된-ID \
+  -H 'Content-Type: application/json' -d '{"amount":10000,"memo":"점심 식사 수정"}'
+curl -i -X DELETE http://127.0.0.1:3000/api/v1/transactions/생성된-ID
+# HTTP 204, 본문 없음
+```
+
+생성·변경은 카테고리 API와 동일하게 JSON 본문 최대 16 KiB, 압축 불가 정책을 사용합니다. 삭제 요청에는 본문을 포함하지 않습니다. 응답의 amount는 검증 후 JavaScript number로, date는 UTC 기준 `YYYY-MM-DD`로 변환하며 BigInt·DB 타임스탬프는 JSON에 직접 반환하지 않습니다.
+
+## 거래 금액 합계와 동시 요청
+
+개별 금액 외에 **수입·지출 모든 거래 금액의 합**을 `Number.MAX_SAFE_INTEGER`(9,007,199,254,740,991) 이하로 유지합니다. 수입에서 지출을 뺀 잔액 기준이 아닙니다. `toLedgerDto`와 쓰기 API는 동일한 `assertLedgerTotal`을 사용합니다.
+
+POST·PATCH는 `Serializable` 트랜잭션 안에서 카테고리·현재 거래 확인, DB 합계 조회, 변경 후 합계 검사, 쓰기 및 DTO 변환을 수행한 후 커밋합니다. PATCH는 `현재 합계 - 이전 금액 + 수정 금액`으로 검사합니다. DB 합계와 계산 모두 bigint로 처리하며 JavaScript number로 중간 변환하지 않습니다. 합계가 한도를 넘으면 **409 `LEDGER_TOTAL_LIMIT_EXCEEDED`**로 거부하고 롤백합니다.
+
+MySQL의 Serializable 읽기는 삽입·변경과 충돌하는 읽기 잠금을 사용하므로 여러 서버 프로세스에서도 합계 검사와 쓰기를 함께 보호합니다. 전체 거래 합계 조회는 O(n)이며 DB가 넓은 범위에 읽기 잠금을 잡을 수 있습니다. 현재 개인용 앱 규모에서는 짧은 트랜잭션으로 처리하고, 별도 테이블·명시적 전역 잠금·프로세스 내부 mutex는 추가하지 않았습니다. 데이터나 동시 쓰기가 크게 늘면 합계 관리 방식을 재검토해야 합니다. 참고: [Prisma 트랜잭션](https://www.prisma.io/docs/orm/v7/prisma-client/queries/transactions), [MySQL 격리 수준](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html).
+
+교착·직렬화 충돌인 P2034는 실패한 트랜잭션 전체를 최대 3회 시도하며, 짧은 지연을 두고 현재 거래와 합계를 다시 읽습니다. 재시도 후에도 충돌하면 **409 `TRANSACTION_WRITE_CONFLICT`**입니다. 그 밖의 오류는 자동 재시도하지 않습니다. DELETE도 같은 트랜잭션·충돌 재시도를 사용하며 원자적 삭제 건수로 동시 삭제의 204·404를 구분합니다. 금액 감소·삭제는 이후 요청이 사용할 한도를 다시 확보합니다.
+
+카테고리 확인과 쓰기는 같은 트랜잭션이며 DB의 복합 외래키도 유지합니다. 카테고리 삭제가 먼저 완료되면 거래 입력을 400으로 거부하고, 거래 생성이 먼저 완료되면 카테고리 삭제를 RESTRICT로 막습니다. PATCH는 최종 유형·카테고리를 현재 행과 함께 검증하고, 제공된 필드만 변경하여 동시 요청에서 생략한 필드를 덮어쓰지 않습니다. 수정·삭제 경합은 DB 순서에 따라 수정 성공 후 삭제되거나, 삭제 이후 수정이 404가 됩니다.
+
+이 합계 정책은 API를 통한 쓰기를 보호합니다. Prisma 스키마만으로 여러 행의 합계를 제한할 수 없으므로 원시 SQL·직접 Prisma 쓰기·미래의 가져오기 작업도 같은 정책을 따라야 합니다. 기존에 외부 쓰기로 한도를 넘은 DB는 조회·삭제로 정리할 수 있으며 POST·PATCH는 변경 후 합계가 한도 이하일 때만 허용합니다.
+
 ## 공통 오류 응답
 
 오류는 개발 모드에서도 다음 JSON 형식을 사용합니다.
@@ -179,9 +236,15 @@ curl -i -X DELETE http://127.0.0.1:3000/api/v1/categories/생성된-ID
 | 404 | `API_NOT_FOUND` | 존재하지 않는 경로 또는 지원하지 않는 메서드 |
 | 409 | `CATEGORY_NAME_CONFLICT` | 유형별 이름 중복, Prisma P2002 |
 | 409 | `CATEGORY_IN_USE` | 거래가 참조하는 카테고리 삭제, Prisma P2003 |
+| 400 | `INVALID_CATEGORY` | 거래 생성·수정의 카테고리 없음 또는 복합 외래키 충돌 |
+| 400 | `CATEGORY_TYPE_MISMATCH` | 거래 유형과 카테고리 유형 불일치 |
+| 404 | `TRANSACTION_NOT_FOUND` | 조회·수정·삭제 거래 없음, 거래 Prisma P2025 |
+| 409 | `LEDGER_TOTAL_LIMIT_EXCEEDED` | 변경 후 전체 거래 금액 합계가 안전 정수 한도 초과 |
+| 409 | `TRANSACTION_WRITE_CONFLICT` | P2034 충돌 재시도 소진 |
+| 409 | `TRANSACTION_CONFLICT` | 거래 고유 키 충돌, Prisma P2002 |
 | 500 | `INTERNAL_SERVER_ERROR` | 예상하지 못한 오류, 메시지는 `서버 오류가 발생했습니다.` |
 
-Express 5가 async 라우트의 오류를 공통 미들웨어에 전달하므로 별도 async 래퍼는 사용하지 않습니다. 카테고리 관련 Prisma 오류 변환은 카테고리 서비스에 두어 향후 다른 모듈에서 의미가 다른 외래키 오류를 독립적으로 처리할 수 있게 했습니다. 참고: [Express 오류 처리](https://expressjs.com/en/5x/guide/error-handling/), [Prisma 7 오류 코드](https://www.prisma.io/docs/orm/v7/reference/error-reference), [Zod 스키마·변환](https://zod.dev/api).
+Express 5가 async 라우트의 오류를 공통 미들웨어에 전달하므로 별도 async 래퍼는 사용하지 않습니다. Prisma 오류는 각 서비스에서 의미에 맞게 변환합니다. 카테고리 삭제의 외래키 충돌은 409, 거래 입력의 카테고리 참조 오류는 400입니다. 거래의 P2000·P2004 길이·CHECK 제약 오류도 원문 없이 400 `INVALID_REQUEST`로 변환합니다. 참고: [Express 오류 처리](https://expressjs.com/en/5x/guide/error-handling/), [Prisma 7 오류 코드](https://www.prisma.io/docs/orm/v7/reference/error-reference), [Zod 스키마·변환](https://zod.dev/api).
 
 모든 응답의 `X-Request-Id`는 서버가 생성하며, 클라이언트가 준 값을 신뢰하지 않습니다. 500 오류 로그에는 요청 ID, HTTP 메서드, ID 값이 없는 경로 템플릿, 오류 종류, Prisma 코드, 스택에서 추출한 소스 상대 위치만 기록합니다. 원본 오류 메시지·전체 스택·Prisma meta·SQL·접속 URL·요청 본문·인증 헤더·쿠키는 기록하거나 응답에 포함하지 않습니다.
 
@@ -201,11 +264,11 @@ Express 5가 async 라우트의 오류를 공통 미들웨어에 전달하므로
 - 금액 `1~999,999,999,999`와 날짜 `1900-01-01~9999-12-31`은 DB CHECK로도 제한합니다. 빈 ID와 빈 이름도 거부합니다.
 - `createdAt`/`updatedAt`은 `DATETIME(3)`이며 `updatedAt`은 Prisma가 갱신합니다. 원시 SQL로 수정할 경우 호출자가 갱신해야 합니다.
 
-`src/domain/ledger.ts`의 카테고리 정규화·DTO 함수는 현재 API에서 재사용합니다. 거래용 함수는 입력 금액에 `Number.isSafeInteger`와 허용 범위를 검사한 후 `bigint`로 바꾸고, 출력은 범위 확인 후 `number`로 바꿉니다. `bigint`를 그대로 `res.json`에 넘기지 마세요. 날짜는 UTC 자정의 `Date`로 저장하고 `YYYY-MM-DD`로 반환하여 한국 시간대에서도 날짜가 밀리지 않게 합니다.
+`src/domain/ledger.ts`의 카테고리·거래 정규화와 DTO 함수를 API에서 재사용합니다. 입력 금액에 `Number.isSafeInteger`와 허용 범위를 검사한 후 `bigint`로 바꾸고, 출력은 범위 확인 후 `number`로 바꿉니다. `bigint`를 그대로 `res.json`에 넘기지 마세요. 날짜는 UTC 자정의 `Date`로 저장하고 `YYYY-MM-DD`로 반환하여 한국 시간대에서도 날짜가 밀리지 않게 합니다.
 
-DTO는 iOS와 같은 `Category`, `Transaction`, `LedgerData(version: 1)` 필드만 반환합니다. DB 타임스탬프는 포함하지 않습니다. `toLedgerDto`는 전체 거래 금액의 합에 대해서도 안전한 정수 범위를 확인합니다. 향후 쓰기 API에서 전체 합 제한을 동시 요청에도 어떻게 보장할지 결정해야 합니다.
+DTO는 iOS와 같은 `Category`, `Transaction`, `LedgerData(version: 1)` 필드만 반환합니다. DB 타임스탬프는 포함하지 않습니다. `toLedgerDto`와 거래 쓰기 API는 동일한 전체 합계 제한을 검증합니다. Ledger 전체 조회 API는 아직 제공하지 않습니다.
 
-`normalizeCategoryName`, `normalizeMemo`는 iOS처럼 trim 후 JS UTF-16 길이를 검사합니다. MySQL `VARCHAR`는 유니코드 문자 개수를 세므로, 카테고리 API는 기존 함수로 검증하고 향후 거래 API도 같은 방식을 사용해야 이모지 등의 길이 제한이 iOS와 일치합니다.
+`normalizeCategoryName`, `normalizeMemo`는 iOS처럼 trim 후 JS UTF-16 길이를 검사합니다. MySQL `VARCHAR`는 유니코드 문자 개수를 세므로, 두 API 모두 기존 함수로 검증하여 이모지 등의 길이 제한을 iOS와 맞춥니다.
 
 읽기 전용으로 확인한 프론트엔드 파일은 `../my-budget-ios/src/domain/{types,ledger,dates}.ts`, `src/data/{mockData,ledgerRepository}.ts`입니다. 해당 레포지토리는 수정하지 않았고 백엔드에서 참조하거나 import하지 않습니다.
 
@@ -228,16 +291,18 @@ TZ=Asia/Seoul npm run test:db
 
 기본 테스트는 실제 DB 없이 동작합니다. 통합 테스트는 `development`/`test`, loopback 호스트, `_dev`/`_test` 접미사가 있는 DB만 허용합니다. 임시 HTTP 서버도 loopback에만 바인딩합니다. DB 테스트 파일은 순차 실행합니다.
 
-일반 API 검증은 트랜잭션으로 롤백합니다. 실제 동시 요청 검증은 서로 다른 연결에서 생성한 테스트 전용 행을 사용하고 `finally`에서 해당 행만 정리합니다. 기존 Seed나 거래는 수정·삭제하지 않으며, 검증 전후 모든 기존 행(타임스탬프 포함)의 SHA-256 해시가 같은지 확인합니다. 테스트 중 프로세스를 강제 종료하면 경합 테스트 전용 행이 남을 수 있으므로 전용 테스트 DB 사용을 권장합니다.
+카테고리의 기본 API 검증은 트랜잭션으로 롤백합니다. 거래 API 및 실제 동시 요청 검증은 테스트 전용 카테고리·거래를 만들고 `finally`에서 해당 행만 정리합니다. 기존 Seed나 거래는 수정·삭제하지 않으며, 검증 전후 모든 기존 행(타임스탬프 포함)의 SHA-256 해시가 같은지 확인합니다. 테스트 중 프로세스를 강제 종료하면 테스트 전용 행이 남을 수 있으므로 전용 테스트 DB 사용을 권장합니다.
 
-Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 기본 테스트 **14개**, DB 테스트 **4개(하위 테스트 2개 포함)**, 타입 검사와 빌드가 통과했습니다. 동시 생성·이름 변경·삭제, 외래키 RESTRICT, 금액·날짜·타입 불변성, 안전한 500 응답·로그를 검증했습니다. 검증 전후 기존 카테고리 10개·거래 0개의 해시가 일치했습니다. 스키마와 마이그레이션은 변경하지 않았습니다. MySQL 8.4 실행 검증은 아직 수행하지 않았습니다.
+합계 한도 테스트는 약 9천 개의 테스트 전용 거래를 배치 삽입하고, 실제 합계를 안전 정수 한도 바로 아래까지 채운 뒤 두 앱 인스턴스의 동시 POST·PATCH를 검증합니다. 이후 테스트 전용 거래를 모두 제거합니다. 현재 DB에 여유가 없으면 별도의 개발·테스트 DB를 준비해야 합니다.
+
+Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 기본 테스트 **20개**, DB 테스트 **9개(하위 테스트 6개 포함)**가 통과했습니다. 거래 API·기간 필터·부분 수정, BIGINT/DATE 변환, 동시 쓰기·삭제, 합계 한도, 외래키 정합성과 기존 카테고리·health를 검증했습니다. 검증 전후 기존 카테고리 10개·거래 0개의 해시가 일치했습니다. 타입 검사와 빌드도 통과했습니다. 빌드된 서버에서도 CRUD·기간 필터·동시 삭제의 204/404·잘못된 입력의 400과 정상 종료를 확인했습니다. 스키마와 마이그레이션은 변경하지 않았습니다. MySQL 8.4 실행 검증은 아직 수행하지 않았습니다.
 
 ## 후속 작업 및 배포 설정
 
-거래 CRUD, 전체 Ledger·통계 API, 프론트엔드 API 연결, AsyncStorage 이전, 인증·접근 제어, 운영 배포는 아직 구현하지 않았습니다.
+전체 Ledger·통계 API, 프론트엔드 API 연결, AsyncStorage 이전, 인증·접근 제어, 운영 배포는 아직 구현하지 않았습니다.
 
-다음 거래 CRUD에서는 기존 금액·날짜·메모 검증과 DTO를 재사용하고, 복합 외래키의 유형 일치 오류를 거래 입력 오류로 변환해야 합니다. 전체 거래 금액의 안전 정수 한도에 대한 동시 쓰기 정책과 날짜 조회 범위·정렬·페이지 처리도 결정해야 합니다.
+후속 작업에서는 목록 페이지 처리, 인증 후 사용자별 Ledger 범위, 생성 요청의 멱등성 정책을 검토할 수 있습니다. 사용자별 데이터로 확장하면 현재 DB 전체에 적용하는 합계 정책도 사용자별로 분리해야 합니다.
 
 향후 서버에서는 `NODE_ENV=production`, 적절한 `HOST`·`PORT`, 별도 운영 `DATABASE_URL`을 환경변수로 주입합니다. 호스트 주소나 자격증명은 소스에 넣지 않습니다. `npm run build` 후 `npm start`, 검토된 마이그레이션은 `npm run db:deploy`를 사용합니다. 초기 개발 Seed는 운영 실행을 거부합니다. 운영 서버·DB에는 이번 작업에서 접속하거나 설정을 변경하지 않았습니다.
 
-기존 Git 설정을 유지합니다. 이번 카테고리 API 작업에서 원격 저장소 생성, commit, push는 수행하지 않았습니다.
+기존 Git 설정을 유지합니다. 이번 거래 API 작업에서 원격 저장소 생성, commit, push는 수행하지 않았습니다.

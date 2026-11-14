@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { createApp } from '../../src/app.ts';
 import { env } from '../../src/config/env.ts';
@@ -7,17 +7,7 @@ import { prisma } from '../../src/db/prisma.ts';
 import { dateToPrisma, type CategoryDto } from '../../src/domain/ledger.ts';
 import { createCategoriesService } from '../../src/modules/categories/categories.service.ts';
 import { jsonRequest, withServer } from '../helpers/http.ts';
-
-async function fingerprintData() {
-  const categories = await prisma.category.findMany({ orderBy: { id: 'asc' } });
-  const transactions = await prisma.transaction.findMany({ orderBy: { id: 'asc' } });
-  const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value,
-    (_key, item: unknown) => typeof item === 'bigint' ? item.toString() : item)).digest('hex');
-  return {
-    categories: { count: categories.length, hash: hash(categories) },
-    transactions: { count: transactions.length, hash: hash(transactions) },
-  };
-}
+import { fingerprintData } from '../helpers/database.ts';
 
 async function expectError(response: Response, status: number, code: string) {
   assert.equal(response.status, status);

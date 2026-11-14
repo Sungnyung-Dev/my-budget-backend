@@ -2,13 +2,18 @@ import express from 'express';
 import { ApiError, createErrorHandler, requestId, type ErrorLogger } from './middleware/errorHandler.ts';
 import { createCategoriesRouter } from './modules/categories/categories.routes.ts';
 import { createCategoriesService, type CategoriesService } from './modules/categories/categories.service.ts';
+import { createTransactionsRouter } from './modules/transactions/transactions.routes.ts';
+import { createTransactionsService, type TransactionsService } from './modules/transactions/transactions.service.ts';
 
 interface AppOptions {
   categoriesService?: CategoriesService;
+  transactionsService?: TransactionsService;
   logger?: ErrorLogger;
 }
 
-export function createApp({ categoriesService = createCategoriesService(), logger }: AppOptions = {}) {
+export function createApp({
+  categoriesService = createCategoriesService(), transactionsService = createTransactionsService(), logger,
+}: AppOptions = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('query parser', 'simple');
@@ -23,6 +28,10 @@ export function createApp({ categoriesService = createCategoriesService(), logge
     response.locals.routeBase = request.baseUrl;
     next();
   }, createCategoriesRouter(categoriesService));
+  app.use('/api/v1/transactions', (request, response, next) => {
+    response.locals.routeBase = request.baseUrl;
+    next();
+  }, createTransactionsRouter(transactionsService));
   app.use((_request, _response, next) => {
     next(new ApiError(404, 'API_NOT_FOUND', 'API 경로를 찾을 수 없습니다.'));
   });

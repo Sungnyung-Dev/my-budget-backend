@@ -74,8 +74,12 @@ export function toTransactionDto(transaction: Transaction): TransactionDto {
 export function toLedgerDto(categories: Category[], transactions: Transaction[]): LedgerDataDto {
   // iOS는 개별 금액뿐 아니라 전체 거래 금액의 합도 안전한 정수인지 검사합니다.
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0n);
+  assertLedgerTotal(total);
+  return { version: 1, categories: categories.map(toCategoryDto), transactions: transactions.map(toTransactionDto) };
+}
+
+export function assertLedgerTotal(total: bigint): void {
   if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new RangeError('전체 거래 금액이 iOS의 안전한 정수 범위를 초과했습니다.');
   }
-  return { version: 1, categories: categories.map(toCategoryDto), transactions: transactions.map(toTransactionDto) };
 }
