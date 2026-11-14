@@ -1,0 +1,55 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum TransactionType {
+  expense
+  income
+}
+
+enum CategorySymbol {
+  food
+  coffee
+  transport
+  shopping
+  living
+  home
+  income
+  other
+}
+
+model Category {
+  id           String          @id @default(uuid()) @db.VarChar(191)
+  name         String          @db.VarChar(20)
+  type         TransactionType
+  symbol       CategorySymbol
+  createdAt    DateTime        @default(now()) @db.DateTime(3)
+  updatedAt    DateTime        @updatedAt @db.DateTime(3)
+  transactions Transaction[]
+
+  @@unique([type, name])
+  // 복합 외래키가 거래와 카테고리의 유형까지 검증합니다.
+  @@unique([id, type])
+}
+
+model Transaction {
+  id         String          @id @default(uuid()) @db.VarChar(191)
+  categoryId String          @db.VarChar(191)
+  type       TransactionType
+  amount     BigInt          @db.BigInt
+  date       DateTime        @db.Date
+  memo       String          @default("") @db.VarChar(100)
+  createdAt  DateTime        @default(now()) @db.DateTime(3)
+  updatedAt  DateTime        @updatedAt @db.DateTime(3)
+  category   Category        @relation(fields: [categoryId, type], references: [id, type], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([date])
+  @@index([categoryId, type])
+}

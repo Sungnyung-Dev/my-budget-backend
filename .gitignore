@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+src/generated/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+*.tsbuildinfo
+.idea/
+.vscode/
+.aws/
+*.pem
+*.key
+*.p12
