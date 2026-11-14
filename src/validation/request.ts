@@ -28,9 +28,9 @@ export function requireJson(request: Request): void {
   }
 }
 
-export function requireNoBody(request: Request): void {
+export function requireNoBody(request: Request, message = '삭제 요청에는 본문을 포함할 수 없습니다.'): void {
   if (request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) > 0) {
-    throw new ApiError(400, 'INVALID_REQUEST', '삭제 요청에는 본문을 포함할 수 없습니다.');
+    throw new ApiError(400, 'INVALID_REQUEST', message);
   }
-  z.undefined({ error: '삭제 요청에는 본문을 포함할 수 없습니다.' }).parse(request.body);
+  z.undefined({ error: message }).parse(request.body);
 }
