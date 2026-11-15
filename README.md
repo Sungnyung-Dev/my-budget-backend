@@ -1,6 +1,6 @@
 # my-budget-backend
 
-개인용 iOS 가계부 앱을 위한 독립적인 Node.js + Express + TypeScript 백엔드입니다. `/health`, 환경변수 검증, Prisma ORM 7 + MySQL 스키마·Seed, 카테고리·거래 CRUD와 전체 Ledger 조회 API 및 공통 입력 검증·오류 처리를 제공합니다. 현재는 로컬 개발용으로만 실행합니다.
+개인용 iOS 가계부 앱을 위한 독립적인 Node.js + Express + TypeScript 백엔드입니다. `/health`, 환경변수 검증, Prisma ORM 7 + MySQL 스키마·Seed, 카테고리·거래 CRUD와 전체 Ledger 조회 API 및 공통 입력 검증·오류 처리를 제공합니다. Ubuntu 내부 HTTP 배포용 PM2 설정과 운영 초기화 절차가 준비되어 있으며 실제 운영 배포는 아직 수행하지 않았습니다.
 
 ## 요구사항
 
@@ -49,7 +49,17 @@ tests/
   db/categories.test.ts        # 실제 DB API·경합 검증, 기존 데이터 해시 비교
   db/transactions.test.ts      # 거래 API·동시 요청·실제 금액 한도 검증
   db/ledger.test.ts            # 전체 조회·CRUD 반영·스냅샷·합계 경계 검증
+  db/production-seed.test.ts   # 운영 초기화 생성·보존·충돌 롤백, 로컬 DB 전용
   db/schema.test.ts            # 로컬 DB 통합 검증, 검증 데이터 롤백
+scripts/
+  database-target.ts          # 비밀번호 없는 대상 표시, 운영 확인 인자 검증
+  check-database.ts           # 읽기 전용 DB 연결·계정 확인
+  init-production-categories.ts # 명시적 확인 후 운영 기본 카테고리 초기화
+deploy/
+  verify-database.sql         # 적용 결과·제약조건·기본 ID 읽기 전용 점검
+  logrotate.my-budget-backend.example # 이 앱의 로그만 회전하는 예시
+docs/deployment.md            # Ubuntu 준비·배포·백업·복구 순서
+ecosystem.config.cjs          # 기존 PM2와 함께 사용할 단일 앱 설정
 prisma.config.ts
 tsconfig.json
 tsconfig.build.json
@@ -73,14 +83,15 @@ npm run db:generate
 | `HOST` | `127.0.0.1` | IP 또는 호스트 이름 |
 | `PORT` | `3000` | 1~65535 정수 |
 | `DATABASE_URL` | `mysql://budget_dev:password@127.0.0.1:3306/my_budget_dev` | MySQL URL, 사용자·호스트·DB 필수 |
+| `ENV_FILE` (선택) | `.env.migration` | 생략 시 `.env`, 명시하면 해당 파일을 읽어야 함 |
 
-네 변수 모두 필수입니다. 누락되거나 잘못되면 시작 단계에서 변수 이름과 오류를 표시합니다. 비밀번호 등 인증정보는 오류 메시지에 출력하지 않습니다. 비밀번호의 `@`, `#`, `/`, `%` 등은 URL 인코딩해야 합니다. DB 이름은 영문·숫자·밑줄을 지원하며, 빈 비밀번호는 로컬 개발 계정에서 사용할 수 있습니다.
+NODE_ENV·HOST·PORT·DATABASE_URL은 모두 필수입니다. 누락되거나 잘못되면 시작 단계에서 변수 이름과 오류를 표시합니다. 비밀번호 등 인증정보는 오류 메시지에 출력하지 않습니다. 비밀번호의 `@`, `#`, `/`, `%` 등은 URL 인코딩해야 합니다. DB 이름은 영문·숫자·밑줄을 지원하며, 빈 비밀번호는 로컬 개발 계정에서 사용할 수 있습니다.
 
-개발 실행, 빌드 시 Client 생성, 빌드된 서버, Prisma CLI 및 Seed 모두 `src/config/env.ts`로 루트의 `.env`를 로딩합니다. 이미 주입된 환경변수가 `.env`보다 우선합니다. `npm ci`는 DB 연결이나 Client 생성을 실행하지 않습니다. 이후 `db:generate` 또는 `build`를 실행하세요. 빌드에도 네 환경변수가 필요하지만 실제 DB 접속은 필요하지 않습니다.
+개발 실행, 빌드 시 Client 생성, 빌드된 서버, Prisma CLI 및 Seed 모두 `src/config/env.ts`로 선택한 파일을 로딩합니다. 기본은 프로젝트 루트의 `.env`이고 `ENV_FILE=.env.migration`처럼 명령에만 지정하면 별도 계정을 사용할 수 있습니다. 명시한 파일이 없거나 경로가 비어 있으면 실행 초기에 오류가 납니다. 이미 주입된 네 환경변수가 파일보다 우선하므로 관리 명령 전 이전 셸 값을 확인하세요. ENV_FILE을 `.env` 파일 안에 넣지 않습니다. `npm ci`는 DB 연결이나 Client 생성을 실행하지 않습니다. 이후 `db:generate` 또는 `build`를 실행하세요. 빌드에도 네 필수 환경변수가 필요하지만 실제 DB 접속은 필요하지 않습니다.
 
 현재 URL의 쿼리 옵션은 지원하지 않고 명확한 오류로 거부합니다. Prisma CLI와 런타임 어댑터가 같은 연결 정보를 사용하도록 하기 위함입니다. 연결 풀 5개, 연결·획득 제한시간 5초, UTC는 `src/db/prisma.ts`에 설정되어 있습니다. 운영용 TLS·연결 풀 조정은 배포 단계에서 CLI와 어댑터 양쪽에 맞춰 추가해야 합니다.
 
-`.env`, `.env.*`, 개인 인증서·키, `.aws`, `node_modules`, `dist`, 생성 Client는 Git에서 제외됩니다. `.env.example`과 `package-lock.json`, 마이그레이션은 버전 관리합니다.
+`.env`, `.env.*`, 개인 인증서·키, `.aws`, `node_modules`, `dist`, 생성 Client, backups 디렉터리는 Git에서 제외됩니다. `.env.example`·`.env.production.example`·`.env.migration.example`, `package-lock.json`, 마이그레이션은 버전 관리합니다. 실제 비밀번호나 인증정보는 예시 파일에 넣지 않습니다.
 
 ## 로컬 MySQL 준비 및 마이그레이션
 
@@ -132,7 +143,7 @@ curl http://127.0.0.1:3000/health
 
 ## 카테고리 API
 
-기본 주소는 `http://127.0.0.1:3000`입니다. `.env`의 `HOST=127.0.0.1`을 유지하며, 인증·접근 제어를 추가하기 전에는 외부에 공개하지 않습니다. 환경변수 추가나 DB 스키마 변경 없이 기존 설정을 사용합니다.
+개발 기본 주소는 `http://127.0.0.1:3000`입니다. `.env`의 `HOST=127.0.0.1`을 유지하며 외부에 공개하지 않습니다. 운영 내부 HTTP의 제안 포트는 3004이고, 다른 서비스의 사용 여부를 먼저 확인합니다.
 
 | 메서드·경로 | 동작 | 성공 응답 |
 | --- | --- | --- |
@@ -313,9 +324,11 @@ DTO는 iOS와 같은 `Category`, `Transaction`, `LedgerData(version: 1)` 필드�
 
 ## Seed
 
-기본 지출 7개(식비·카페·교통·쇼핑·생활·주거·기타), 수입 3개(급여·용돈·기타)의 ID·이름·symbol을 iOS와 동일하게 넣습니다. 기존 ID가 있으면 보존하고, 동일 유형·이름이 다른 ID로 존재하면 upsert로 중복 생성을 피합니다. 기존 카테고리 이름이나 symbol을 덮어쓰지 않습니다. 전체 Seed는 트랜잭션이며 데모 거래는 생성하지 않습니다.
+기본 지출 7개(식비·카페·교통·쇼핑·생활·주거·기타), 수입 3개(급여·용돈·기타)의 ID·이름·symbol을 iOS와 동일하게 넣습니다. 개발 `db:seed`는 기존 ID를 보존하고, 동일 유형·이름이 다른 ID로 존재하면 upsert로 중복 생성을 피합니다. 기존 카테고리 이름이나 symbol을 덮어쓰지 않습니다. 전체 Seed는 트랜잭션이며 데모 거래는 생성하지 않습니다.
 
 개발 Seed는 `NODE_ENV=development`이고 DB 호스트가 loopback인 경우만 실행됩니다. SSH 포트 전달이 있다면 로컬 주소도 원격 DB를 가리킬 수 있으므로 실제 접속 대상을 확인하세요.
+
+운영용 `db:init:production`은 공유 로직의 strict 모드를 사용합니다. NODE_ENV=production에서 대상 정보를 먼저 표시하고, 정확한 `--confirm-target host:port/database`가 있어야 생성합니다. 같은 ID·유형의 기존 이름·symbol·타임스탬프는 보존하지만, 다른 ID의 같은 유형·이름 또는 동일 ID의 다른 유형은 충돌로 보고하며 이번 생성 전체를 롤백합니다. 서버 시작 시 자동 실행하지 않습니다. 명령과 DB 백업·검증 순서는 [운영 배포 문서](docs/deployment.md)에 있습니다.
 
 ## 검증
 
@@ -343,7 +356,7 @@ TZ=Asia/Seoul node --import tsx --test tests/db/ledger.test.ts
 
 Ledger 통합 테스트는 기존 목록과의 정렬 일치, 기본 카테고리 10개, 거래 추가·수정·삭제 및 카테고리 이름 변경 반영, DTO와 참조 무결성을 확인합니다. 스냅샷 테스트는 실제 카테고리 SELECT 이후 거래 SELECT 전에 읽기만 대기시킨 뒤, 별도 연결의 기존 CRUD 요청을 모두 커밋하고 읽기를 재개합니다. 쓰기가 읽기에 막히지 않고, 전체 응답이 변경 전 스냅샷과 정확히 일치하는지 확인합니다. 합계 검증은 롤백 트랜잭션 안에서 전용 거래를 삽입하여 정확히 `MAX_SAFE_INTEGER`일 때 200, 1원 초과 시 안전한 500인지 검사합니다.
 
-Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 기본 테스트 **24개**, DB 테스트 **14개(하위 테스트 10개 포함)**가 통과했습니다. Ledger 조회와 기존 거래·카테고리 API·health를 함께 검증했으며, 검증 전후 기존 카테고리 10개·거래 0개의 해시가 일치했습니다. 타입 검사와 빌드도 통과했습니다. 빌드된 서버를 loopback에서 실행하여 Ledger·기존 조회 API, 잘못된 쿼리의 400 및 정상 종료를 확인했습니다. 스키마와 마이그레이션은 변경하지 않았습니다. MySQL 8.4 실행 검증은 아직 수행하지 않았습니다.
+Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 기본 테스트 **28개**, DB 테스트 **19개(하위 테스트 14개 포함)**가 통과했습니다. PM2 설정, ENV_FILE 선택·오류·주입 우선순위, 운영 초기화의 확인 인자·생성·보존·충돌 롤백, 기존 거래·카테고리·Ledger API·health를 함께 검증했습니다. 검증 전후 기존 카테고리 10개·거래 0개의 해시가 일치했습니다. 타입 검사·빌드·Prisma 스키마 검증과 배포 점검 SQL의 SELECT 11개도 통과했습니다. 운영 설정 형식의 임시 파일로 빌드된 서버를 loopback에서 실행하여 기존 조회 API와 정상 종료를 확인했습니다. 실제 PM2·Ubuntu·운영 계정 권한과 MySQL 8.4 실행·백업 복원은 아직 실행 검증하지 않았습니다.
 
 ## 후속 작업 및 배포 설정
 
@@ -351,6 +364,24 @@ Node.js 24.11.0 / 로컬 MySQL 9.6.0에서 기본 테스트 **24개**, DB 테스
 
 후속 작업에서는 인증 후 사용자별 Ledger 범위와 생성 요청의 멱등성 정책을 검토할 수 있습니다. 사용자별 데이터로 확장하면 Ledger의 두 SELECT와 현재 DB 전체에 적용하는 합계 정책을 모두 사용자별로 분리해야 합니다. 프론트엔드 연동 시 서버 URL을 별도 설정으로 주입하고 `version: 1`, 문자열 ID, 날짜 문자열·숫자 금액, 공통 오류 및 요청 ID를 처리해야 합니다. 거래 부분 조회를 전체 Ledger로 취급하면 통계가 달라지므로 전체 배열 계약을 유지합니다.
 
-향후 서버에서는 `NODE_ENV=production`, 적절한 `HOST`·`PORT`, 별도 운영 `DATABASE_URL`을 환경변수로 주입합니다. 호스트 주소나 자격증명은 소스에 넣지 않습니다. `npm run build` 후 `npm start`, 검토된 마이그레이션은 `npm run db:deploy`를 사용합니다. 초기 개발 Seed는 운영 실행을 거부합니다. 운영 서버·DB에는 이번 작업에서 접속하거나 설정을 변경하지 않았습니다.
+실제 서버에서 따라 할 전체 순서는 **[Ubuntu 배포 문서](docs/deployment.md)**에 정리했습니다. 운영 `.env`는 앱 계정, `.env.migration`은 마이그레이션 계정을 사용합니다. 새 라이브러리 없이 선택적 ENV_FILE만 추가했습니다. PM2는 `my-budget-backend` 단일 프로세스를 실행하며 비밀정보는 설정에 저장하지 않습니다. HOST=127.0.0.1, 기본 제안 PORT=3004이고 포트 충돌을 확인한 뒤 결정합니다. 기존 서비스·Nginx·방화벽은 변경하지 않습니다.
 
-기존 Git 설정을 유지합니다. 이번 Ledger API 작업에서 환경변수·패키지·Prisma 스키마·마이그레이션을 추가하거나 변경하지 않았으며, 프론트엔드 수정, 원격 저장소 생성, commit, push도 수행하지 않았습니다.
+다음은 문서의 사전 점검·백업을 완료한 후 **서버에서 별도로 실행할 명령의 요약**입니다. 아직 이 명령들을 운영에서 실행하지 않았습니다.
+
+```sh
+# .env.production.example → .env, .env.migration.example → .env.migration
+# 실제 계정 설정·chmod 600·백업·DB 접속 대상 확인 후
+unset NODE_ENV HOST PORT DATABASE_URL ENV_FILE
+npm ci --include=dev
+npm run build
+ENV_FILE=.env.migration npm run db:check
+ENV_FILE=.env.migration npm run db:deploy
+ENV_FILE=.env.migration npm run db:status
+ENV_FILE=.env.migration npm run db:init:production
+ENV_FILE=.env.migration npm run db:init:production -- --confirm-target '127.0.0.1:3306/my_budget'
+pm2 start ecosystem.config.cjs --only my-budget-backend
+curl --fail http://127.0.0.1:3004/health
+pm2 logs my-budget-backend --lines 100 --nostream
+```
+
+운영 서버 접속·운영 DB 변경·외부 공개·배포·프론트엔드 수정·Git commit/push는 수행하지 않았습니다. Prisma 스키마·마이그레이션과 기존 API는 유지합니다.

@@ -18,7 +18,9 @@
     "db:migrate": "prisma migrate dev --config prisma.config.ts",
     "db:deploy": "prisma migrate deploy --config prisma.config.ts",
     "db:status": "prisma migrate status --config prisma.config.ts",
-    "db:seed": "prisma db seed --config prisma.config.ts"
+    "db:seed": "prisma db seed --config prisma.config.ts",
+    "db:check": "tsx scripts/check-database.ts",
+    "db:init:production": "tsx scripts/init-production-categories.ts"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "7.10.1",

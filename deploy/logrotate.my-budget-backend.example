@@ -1,0 +1,11 @@
+# 실제 PM2 로그 경로·실행 사용자·그룹을 확인하고 치환한 뒤 사용합니다.
+/ABSOLUTE_PM2_HOME/logs/my-budget-backend-out.log /ABSOLUTE_PM2_HOME/logs/my-budget-backend-error.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su DEPLOY_USER DEPLOY_GROUP
+}

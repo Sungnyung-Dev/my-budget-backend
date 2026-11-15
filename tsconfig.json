@@ -11,5 +11,5 @@
     "types": ["node"],
     "rewriteRelativeImportExtensions": true
   },
-  "include": ["src/**/*.ts", "prisma/**/*.ts", "tests/**/*.ts", "prisma.config.ts"]
+  "include": ["src/**/*.ts", "prisma/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "prisma.config.ts"]
 }

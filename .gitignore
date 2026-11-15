@@ -5,6 +5,8 @@ src/generated/
 .env
 .env.*
 !.env.example
+!.env.production.example
+!.env.migration.example
 *.log
 .DS_Store
 *.tsbuildinfo
@@ -14,3 +16,6 @@ src/generated/
 *.pem
 *.key
 *.p12
+backups/
+*.sql.gz
+*.dump

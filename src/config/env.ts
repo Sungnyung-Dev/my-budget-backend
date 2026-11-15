@@ -1,7 +1,14 @@
 import { config } from 'dotenv';
 import { isIP } from 'node:net';
 
-config({ quiet: true });
+const envFile = process.env.ENV_FILE?.trim();
+if (process.env.ENV_FILE !== undefined && !envFile) {
+  throw new Error('ENV_FILE: 비어 있지 않은 환경변수 파일 경로가 필요합니다.');
+}
+const loaded = config({ path: envFile ?? '.env', quiet: true });
+if (envFile && loaded.error) {
+  throw new Error('ENV_FILE: 지정한 환경변수 파일을 읽을 수 없습니다.');
+}
 
 export interface Environment {
   NODE_ENV: 'development' | 'test' | 'production';
