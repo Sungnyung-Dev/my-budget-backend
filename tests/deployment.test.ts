@@ -30,7 +30,7 @@ test('운영 초기화는 production과 정확한 대상 확인을 요구하고 
   assert.doesNotMatch(JSON.stringify(databaseTarget(environment)), /hidden-password|mysql:\/\//);
 });
 
-test('PM2는 프로젝트의 단일 프로세스와 .env를 사용하고 비밀정보를 설정에 넣지 않는다', () => {
+test('PM2는 단일 프로세스와 서버 전용 환경파일을 사용하고 비밀정보를 설정에 넣지 않는다', () => {
   const require = createRequire(import.meta.url);
   const { apps } = require('../ecosystem.config.cjs');
   assert.equal(apps.length, 1);
@@ -43,8 +43,10 @@ test('PM2는 프로젝트의 단일 프로세스와 .env를 사용하고 비밀�
   assert.equal(app.instances, 1);
   assert.equal(app.watch, false);
   assert.ok(app.kill_timeout > 10000);
-  assert.deepEqual(app.env, { NODE_ENV: 'production' });
-  for (const name of ['DATABASE_URL', 'ENV_FILE', 'HOST', 'PORT']) assert.ok(app.filter_env.includes(name));
+  assert.deepEqual(app.env, { NODE_ENV: 'production', ENV_FILE: '/etc/my-budget/production.env' });
+  assert.ok(!app.filter_env.includes('ENV_FILE'));
+  for (const name of ['DATABASE_URL', 'HOST', 'PORT', 'AUTH_USERNAME', 'AUTH_PASSWORD_HASH', 'AUTH_ORIGIN',
+    'DATABASE_RSA_PUBLIC_KEY_FILE', 'DATABASE_TLS_CA_FILE']) assert.ok(app.filter_env.includes(name));
   assert.doesNotMatch(JSON.stringify(apps), /mysql:\/\/|hidden-password/);
 });
 
