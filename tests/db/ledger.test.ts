@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { defaultCategories, seedCategories } from '../../prisma/seed-categories.ts';
-import { createApp } from '../../src/app.ts';
+import { testApp as createApp, authenticatedFetch as fetch } from '../helpers/auth.ts';
 import { prisma } from '../../src/db/prisma.ts';
 import { MAX_AMOUNT, dateToPrisma, type CategoryDto, type LedgerDataDto, type TransactionDto } from '../../src/domain/ledger.ts';
 import type { Prisma } from '../../src/generated/prisma/client.ts';

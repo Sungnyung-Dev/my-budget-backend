@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import test from 'node:test';
-import { app } from '../src/app.ts';
+import { testApp } from './helpers/auth.ts';
+const app = testApp();
 
 test('/health는 DB 조회 없이 HTTP 200 JSON을 반환한다', async () => {
   const server = app.listen(0, '127.0.0.1');

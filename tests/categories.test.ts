@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createApp } from '../src/app.ts';
+import { testApp as createApp, authenticatedFetch as fetch } from './helpers/auth.ts';
 import { prisma } from '../src/db/prisma.ts';
 import type { CategoryDto } from '../src/domain/ledger.ts';
 import { Prisma } from '../src/generated/prisma/client.ts';

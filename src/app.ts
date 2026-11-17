@@ -1,4 +1,7 @@
 import express from 'express';
+import { readAuthConfig } from './modules/auth/config.ts';
+import { createAuthService, type AuthService } from './modules/auth/session.ts';
+import { createAuthRouter, noStore, requireSession, requireCsrf } from './modules/auth/auth.ts';
 import { ApiError, createErrorHandler, requestId, type ErrorLogger } from './middleware/errorHandler.ts';
 import { createCategoriesRouter } from './modules/categories/categories.routes.ts';
 import { createCategoriesService, type CategoriesService } from './modules/categories/categories.service.ts';
@@ -7,7 +10,8 @@ import { createLedgerService, type LedgerService } from './modules/ledger/ledger
 import { createTransactionsRouter } from './modules/transactions/transactions.routes.ts';
 import { createTransactionsService, type TransactionsService } from './modules/transactions/transactions.service.ts';
 
-interface AppOptions {
+export interface AppOptions {
+  auth?: AuthService;
   categoriesService?: CategoriesService;
   transactionsService?: TransactionsService;
   ledgerService?: LedgerService;
@@ -16,17 +20,22 @@ interface AppOptions {
 
 export function createApp({
   categoriesService = createCategoriesService(), transactionsService = createTransactionsService(),
-  ledgerService = createLedgerService(), logger,
+  ledgerService = createLedgerService(), logger, auth = createAuthService(readAuthConfig()),
 }: AppOptions = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('query parser', 'simple');
+  app.set('trust proxy', ['127.0.0.1/32', '::1/128']);
   app.use(requestId);
 
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok' });
   });
 
+  app.use('/api', noStore);
+  app.use('/api/v1/auth', express.json({ limit: '16kb', inflate: false }), createAuthRouter(auth));
+  // 이후 추가되는 금융 경로도 기본적으로 인증을 요구합니다.
+  app.use('/api', requireSession(auth), requireCsrf(auth));
   app.use(express.json({ limit: '16kb', inflate: false }));
   app.use('/api/v1/categories', (request, response, next) => {
     response.locals.routeBase = request.baseUrl;
@@ -46,5 +55,3 @@ export function createApp({
   app.use(createErrorHandler(logger));
   return app;
 }
-
-export const app = createApp();

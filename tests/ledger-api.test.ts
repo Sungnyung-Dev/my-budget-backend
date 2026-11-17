@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import test from 'node:test';
-import { createApp } from '../src/app.ts';
+import { testApp as createApp, authenticatedFetch as fetch, authenticatedHeaders } from './helpers/auth.ts';
 import { MAX_AMOUNT, dateToPrisma, toLedgerDto } from '../src/domain/ledger.ts';
 import { Prisma, type Category, type Transaction } from '../src/generated/prisma/client.ts';
 import type { ErrorLog } from '../src/middleware/errorHandler.ts';
@@ -57,6 +57,7 @@ test('Ledger 쿼리와 모든 형식의 GET 본문은 서비스 호출 전에 40
     ] as const) {
       await new Promise<void>((resolve, reject) => {
         const headers = {
+          ...authenticatedHeaders,
           ...(contentType ? { 'Content-Type': contentType } : {}),
           ...(chunked ? { 'Transfer-Encoding': 'chunked' } : { 'Content-Length': Buffer.byteLength(body) }),
         };

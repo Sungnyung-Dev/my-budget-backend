@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { createApp } from '../../src/app.ts';
+import { testApp as createApp, authenticatedFetch as fetch } from '../helpers/auth.ts';
 import { prisma } from '../../src/db/prisma.ts';
 import { dateToPrisma, MAX_AMOUNT, type TransactionDto } from '../../src/domain/ledger.ts';
 import { jsonRequest, withServer } from '../helpers/http.ts';

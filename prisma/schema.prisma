@@ -53,3 +53,13 @@ model Transaction {
   @@index([date])
   @@index([categoryId, type])
 }
+
+model Session {
+  tokenHash         String   @id @db.Char(64)
+  csrfToken         String   @db.VarChar(43)
+  credentialVersion String   @db.Char(64)
+  createdAt         DateTime @default(now()) @db.DateTime(3)
+  expiresAt         DateTime @db.DateTime(3)
+
+  @@index([expiresAt])
+}
